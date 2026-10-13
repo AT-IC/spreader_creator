@@ -2,19 +2,6 @@
 
 A Python-based GUI tool designed for TPA Operations Supervisors to streamline the creation of the Daily Spreader. This tool extracts shift schedules, overtime, leave requests, and shift notes directly from the WMT Scheduler "Worksheet View" and automatically populates the official Excel template.
 
-## First-Time Setup (Important)
-
-Before using the tool for the first time on any workstation, you must install the required background engines. You do not need IT Admin privileges to do this.
-
-1. Navigate to the shared Watch Desk folder.
-2. Double-click **`IC-Tools\Spreader Creator\Install_Python.bat`**. This may need to be ran Twice see #4
-3. **What this does:**
-   * It checks if Python is installed on your PC. 
-   * If Python is missing, it silently installs it directly from the network (`IC-Tools\python-manager-26.3.msix`).
-   * It installs the two required data engines (`openpyxl` for Excel and `beautifulsoup4` for HTML).
-4. **Note:** If the script has to install Python for the first time, it will ask you to close the window and double-click the script **one more time** to finish the setup.
-5. Once the script says `[SUCCESS]`, you are ready to go.
-
 ## Daily Usage Instructions
 
 To open the tool, double-click **`IC-Tools\Spreader Creator\spreader_creator.py`**.
