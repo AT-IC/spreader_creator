@@ -1,5 +1,6 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import messagebox, filedialog
+import customtkinter as ctk
 import re
 from datetime import datetime, timedelta
 import openpyxl
@@ -18,19 +19,31 @@ DOWNLOADS_DIR = r"\\ITPAATPNFP001.ad.faa.gov\TPA-Data\Air Traffic\Watch Desk Doc
 WMT_URL = "https://wmtscheduler.faa.gov/Views/WorksheetView"
 APP_ICON = r"\\ITPAATPNFP001.ad.faa.gov\TPA-Data\Air Traffic\Watch Desk Documents\IC-Tools\Spreader Creator\Spreader_Creator_Icon.ico"
 
-COLORS = {
-    "bg_main": "#202020",
-    "fg_main": "#ffffff",
-    "bg_input": "#333333",
-    "bg_log": "#1e1e1e",
-    "fg_log": "#00d084",
-    "btn_primary": "#005A9C",
-    "btn_hover": "#0073C4",
-    "btn_secondary": "#444444",
-    "btn_sec_hover": "#555555",
-    "btn_help": "#117711",
-    "btn_help_hover": "#119911"
+CONFIG = {
+    # Fine-tune the complete visual theme here.
+    "bg_main": "#120B2E",
+    "bg_surface": "#21134D",
+    "bg_surface_alt": "#2B1A5E",
+    "bg_input": "#332166",
+    "bg_log": "#0C0820",
+    "fg_main": "#FFFFFF",
+    "fg_muted": "#C5BFE0",
+    "fg_log": "#A8F5D0",
+    "accent": "#F02BAE",
+    "accent_hover": "#FF4BC2",
+    "accent_pressed": "#C91B8E",
+    "btn_secondary": "#4B367C",
+    "btn_sec_hover": "#61499A",
+    "border": "#5B4395",
+    "success": "#49D7A7",
+    "danger": "#FF6B9D",
+    "radius_card": 24,
+    "radius_control": 14,
+    "font_family": "Segoe UI"
 }
+
+# Backwards-compatible alias for the non-UI code and any local customizations.
+COLORS = CONFIG
 
 # ==========================================
 # 2. CORE BUSINESS LOGIC & TIME MATH
@@ -61,10 +74,10 @@ def add_hours(h, m, hours_to_add):
 def calculate_times(start_time, final_code, orig_code, ot_hours=0, fos_hours=0):
     if start_time in ["2230", "2300", "2330", "2400"]:
         return ("", "MID") if final_code == "T" else ("MID", "")
-    
+
     # FOS Start time adjustment for calculation purposes only
     adjusted_start = subtract_hours(start_time, fos_hours)
-    
+
     try:
         start_h, start_m = int(adjusted_start[:2]), int(adjusted_start[2:4])
     except ValueError:
@@ -102,10 +115,10 @@ def sort_chronological(shift):
 def parse_html_data(filepath, log_cb):
     filepath = filepath.strip('"').strip("'")
     log_cb(f"Opening file: {filepath}")
-    
+
     with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
         soup = BeautifulSoup(f.read(), 'html.parser')
-    
+
     # --- 1. OVERTIME ---
     ot_dict = {}
     log_cb("--- SCANNING OVERTIME TABLE ---")
@@ -115,12 +128,12 @@ def parse_html_data(filepath, log_cb):
             init = cols[0].get_text(strip=True)
             hrs_text = cols[2].get_text(strip=True)
             reason_text = cols[3].get_text(strip=True).upper()
-            
+
             if hrs_text.isdigit():
                 hrs = int(hrs_text)
                 fos_match = re.search(r'(\d+)\s*FOS', reason_text)
                 fos = int(fos_match.group(1)) if fos_match else 0
-                
+
                 if init not in ot_dict: ot_dict[init] = {'hrs': 0, 'fos': 0}
                 ot_dict[init]['hrs'] += hrs
                 ot_dict[init]['fos'] += fos
@@ -132,13 +145,13 @@ def parse_html_data(filepath, log_cb):
     for table_id in ['tblShiftChange', 'tblXTECTE', 'tblSupRequests']:
         req_table = soup.find('table', id=table_id)
         if not req_table: continue
-            
+
         for row in req_table.find_all('tr'):
             cols = row.find_all('td')
             if len(cols) >= 6:
                 init, lv_type, lv_from, lv_to = [cols[i].get_text(strip=True) for i in range(4)]
                 status = cols[5].get_text(strip=True)
-                
+
                 if "Approved" not in status and "Shift Chg" not in lv_type and "Shift Swap" not in lv_type:
                     time_addon = ""
                     if lv_from and lv_from.lower() != "shift":
@@ -158,7 +171,7 @@ def parse_html_data(filepath, log_cb):
                 note_text = cols[1].find('a', title=True).get_text(strip=True)
                 if note_text and note_text != "<Add Shift Notes>":
                     cleaned_note = re.sub(r'^[A-Za-z]{2,3}\s*-\s*', '', note_text)
-                    
+
                     # Filter out WMT auto-generated L&A/CruArt notes (e.g., "65 - OT..." or "51 - LOT...")
                     if re.match(r'^\d{2}\s*-', cleaned_note):
                         log_cb(f"Ignored System Note -> {cleaned_note}")
@@ -170,34 +183,34 @@ def parse_html_data(filepath, log_cb):
     shifts = []
     log_cb("--- PROCESSING SHIFTS ---")
     ignore_tables = ['tblShiftChange', 'tblXTECTE', 'tblSupRequests', 'ShiftNotesForDay']
-    
+
     for row in soup.find_all('tr'):
         cols = row.find_all('td')
         if len(cols) < 4: continue
-        
+
         parent = row.find_parent('table')
         if parent and parent.get('id') in ignore_tables: continue
-            
+
         time_str = cols[0].get_text(strip=True).replace('\xa0', '').strip()
         time_match = re.match(r'^(\d{2,4})([A-Z]*)$', time_str)
-        
+
         if time_match:
             t_str, orig_code = time_match.groups()
             t_str = t_str.zfill(4) if len(t_str) == 3 else (t_str + "00" if len(t_str) <= 2 else t_str)
-            
+
             for idx, col in enumerate(cols[2:4]):
                 is_dev = (idx == 1)
                 cell_words = col.get_text(separator=' ', strip=True).replace('\xa0', ' ').split()
-                
+
                 for word in cell_words:
                     match = re.match(r'^([A-Z]{2})(\$?)$', word)
                     if match:
                         init, has_dollar = match.group(1), bool(match.group(2))
                         if init in ["OF", "OT"]: continue
-                        
+
                         ot_hrs = ot_dict.get(init, {}).get('hrs', 0)
                         fos_hrs = ot_dict.get(init, {}).get('fos', 0)
-                        
+
                         # Determine Code
                         if is_dev:
                             final_code = "T"
@@ -207,10 +220,10 @@ def parse_html_data(filepath, log_cb):
                                 final_code = "$$" if orig_code == "A" or ot_hrs > 8 else "$"
                             elif not orig_code and (0 < ot_hrs < 8) and not has_dollar:
                                 final_code = "$$"
-                        
+
                         if fos_hrs > 0:
                             log_cb(f"FOS Detected -> {init} stays in {t_str} block, off-time math runs from {subtract_hours(t_str, fos_hrs)}")
-                        
+
                         shifts.append({
                             'initials': init,
                             'start': t_str,
@@ -219,9 +232,9 @@ def parse_html_data(filepath, log_cb):
                             'ot': ot_hrs,
                             'fos': fos_hrs
                         })
-                        
+
                         log_cb(f"Parsed -> {init} | Start: {t_str} | Code: {final_code or 'Standard (8-hr)'}{' (DEV)' if is_dev else ''}")
-                            
+
     return shifts, leave_list, notes_list
 
 
@@ -238,22 +251,22 @@ def build_excel_file(all_shifts, leave_list, notes_list, date_str, log_cb):
     log_cb("Loading Excel template (This may take a moment)...")
     wb = openpyxl.load_workbook(TEMPLATE_PATH, keep_vba=True)
     ws = wb["Projected Coverage"]
-    
+
     def write_block(shifts_to_write, cols, label, start_row):
         row = start_row
         last_start = ""
         c_init, c_off, c_code, c_req = cols
-        
+
         for shift in shifts_to_write:
             if last_start and shift['start'] != last_start:
-                row += 1 
-            
+                row += 1
+
             off, req = calculate_times(shift['start'], shift['code'], shift['orig_code'], shift['ot'], shift['fos'])
             ws[f'{c_init}{row}'] = shift['initials']
             ws[f'{c_off}{row}'] = to_num(off)
             ws[f'{c_code}{row}'] = shift['code']
             ws[f'{c_req}{row}'] = to_num(req)
-            
+
             last_start = shift['start']
             row += 1
         log_cb(f"Wrote {len(shifts_to_write)} {label} shifts to Excel.")
@@ -278,29 +291,31 @@ def build_excel_file(all_shifts, leave_list, notes_list, date_str, log_cb):
 # ==========================================
 # 5. CUSTOM UI COMPONENTS
 # ==========================================
-class MiniCalendar(tk.Toplevel):
+class MiniCalendar(ctk.CTkToplevel):
+    """Small themed date picker that writes directly to the target entry."""
     def __init__(self, parent, entry_widget):
         super().__init__(parent)
         self.entry_widget = entry_widget
         self.title("Select Date")
-        self.geometry(f"+{parent.winfo_rootx() + 150}+{parent.winfo_rooty() + 200}")
-        self.configure(bg=COLORS["bg_main"])
+        self.geometry(f"300x330+{parent.winfo_rootx() + 150}+{parent.winfo_rooty() + 150}")
+        self.configure(fg_color=CONFIG["bg_main"])
         self.resizable(False, False)
-        self.attributes('-toolwindow', True)
-
         self.curr_year, self.curr_month = datetime.now().year, datetime.now().month
-        
-        self.header_frame = tk.Frame(self, bg=COLORS["bg_main"])
-        self.header_frame.pack(fill=tk.X, pady=10, padx=10)
-        
-        tk.Button(self.header_frame, text="<", command=self.prev_month, bg=COLORS["btn_secondary"], fg=COLORS["fg_main"], relief=tk.FLAT, cursor="hand2").pack(side=tk.LEFT)
-        self.month_lbl = tk.Label(self.header_frame, bg=COLORS["bg_main"], fg=COLORS["fg_main"], font=("Segoe UI", 10, "bold"))
-        self.month_lbl.pack(side=tk.LEFT, expand=True)
-        tk.Button(self.header_frame, text=">", command=self.next_month, bg=COLORS["btn_secondary"], fg=COLORS["fg_main"], relief=tk.FLAT, cursor="hand2").pack(side=tk.RIGHT)
-        
-        self.cal_frame = tk.Frame(self, bg=COLORS["bg_main"])
-        self.cal_frame.pack(padx=10, pady=(0, 10))
-        
+
+        self.header_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.header_frame.pack(fill="x", padx=18, pady=(18, 10))
+        ctk.CTkButton(self.header_frame, text="‹", width=36, height=32, corner_radius=12,
+                      fg_color=CONFIG["btn_secondary"], hover_color=CONFIG["btn_sec_hover"],
+                      command=self.prev_month).pack(side="left")
+        self.month_lbl = ctk.CTkLabel(self.header_frame, text="", text_color=CONFIG["fg_main"],
+                                      font=(CONFIG["font_family"], 14, "bold"))
+        self.month_lbl.pack(side="left", expand=True)
+        ctk.CTkButton(self.header_frame, text="›", width=36, height=32, corner_radius=12,
+                      fg_color=CONFIG["btn_secondary"], hover_color=CONFIG["btn_sec_hover"],
+                      command=self.next_month).pack(side="right")
+
+        self.cal_frame = ctk.CTkFrame(self, fg_color=CONFIG["bg_surface"], corner_radius=18)
+        self.cal_frame.pack(padx=18, pady=(0, 18), fill="both", expand=True)
         self.update_calendar()
         self.transient(parent)
         self.grab_set()
@@ -321,45 +336,19 @@ class MiniCalendar(tk.Toplevel):
         self.destroy()
 
     def update_calendar(self):
-        for widget in self.cal_frame.winfo_children(): widget.destroy()
-        self.month_lbl.config(text=f"{calendar.month_name[self.curr_month]} {self.curr_year}")
-        
-        for i, d in enumerate(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]):
-            tk.Label(self.cal_frame, text=d, bg=COLORS["bg_main"], fg="#aaaaaa", font=("Segoe UI", 8)).grid(row=0, column=i, padx=2, pady=2)
-            
-        cal = calendar.Calendar(firstweekday=calendar.SUNDAY)
-        for row_idx, week in enumerate(cal.monthdayscalendar(self.curr_year, self.curr_month)):
+        for widget in self.cal_frame.winfo_children():
+            widget.destroy()
+        self.month_lbl.configure(text=f"{calendar.month_name[self.curr_month]} {self.curr_year}")
+        for i, day_name in enumerate(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]):
+            ctk.CTkLabel(self.cal_frame, text=day_name, text_color=CONFIG["fg_muted"],
+                         font=(CONFIG["font_family"], 10, "bold")).grid(row=0, column=i, padx=3, pady=(12, 5))
+        for row_idx, week in enumerate(calendar.Calendar(firstweekday=calendar.SUNDAY).monthdayscalendar(self.curr_year, self.curr_month)):
             for col_idx, day in enumerate(week):
-                if day != 0:
-                    btn = tk.Button(self.cal_frame, text=str(day), width=3, bg=COLORS["btn_secondary"], fg=COLORS["fg_main"], 
-                                    activebackground=COLORS["btn_primary"], relief=tk.FLAT, cursor="hand2",
-                                    command=lambda d=day: self.select_date(d))
-                    btn.grid(row=row_idx+1, column=col_idx, padx=1, pady=1)
-
-class RoundedButton(tk.Canvas):
-    def __init__(self, parent, text, command, radius=15, width=150, height=40, bg_color=COLORS["btn_primary"], hover_color=COLORS["btn_hover"], font=("Segoe UI", 10, "bold"), **kwargs):
-        super().__init__(parent, borderwidth=0, relief="flat", highlightthickness=0, bg=COLORS["bg_main"], width=width, height=height, cursor="hand2", **kwargs)
-        self.command, self.bg_color, self.hover_color, self.radius, self.text_val, self.font = command, bg_color, hover_color, radius, text, font
-        self.bind("<Configure>", self.draw)
-        self.bind("<Enter>", lambda e: self.itemconfig(self.rect_id, fill=self.hover_color))
-        self.bind("<Leave>", lambda e: self.itemconfig(self.rect_id, fill=self.bg_color))
-        self.bind("<ButtonPress-1>", lambda e: self.move(self.text_id, 0, 1))
-        self.bind("<ButtonRelease-1>", self.on_release)
-
-    def draw(self, event=None):
-        self.delete("all")
-        w, h = self.winfo_width(), self.winfo_height()
-        r = self.radius
-        points = [r,0, r,0, w-r,0, w-r,0, w,0, w,r, w,r, w,h-r, w,h-r, w,h, w-r,h, w-r,h, r,h, r,h, 0,h, 0,h-r, 0,h-r, 0,r, 0,r, 0,0]
-        self.rect_id = self.create_polygon(points, fill=self.bg_color, smooth=True)
-        self.text_id = self.create_text(w/2, h/2, text=self.text_val, fill="white", font=self.font)
-
-    def on_release(self, event):
-        self.move(self.text_id, 0, -1)
-        if self.command: self.command()
-
-    def config_text(self, new_text):
-        self.itemconfig(self.text_id, text=new_text)
+                if day:
+                    ctk.CTkButton(self.cal_frame, text=str(day), width=29, height=27, corner_radius=10,
+                                  fg_color=CONFIG["btn_secondary"], hover_color=CONFIG["accent"],
+                                  command=lambda selected=day: self.select_date(selected)).grid(
+                                      row=row_idx + 1, column=col_idx, padx=3, pady=3)
 
 
 # ==========================================
@@ -369,119 +358,122 @@ class SpreaderApp:
     def __init__(self, root):
         self.root = root
         self.root.title("TPA Watch Desk Spreader Creator - v1.0.1")
-        
+
         # Load the custom icon for the title bar
         try:
             self.root.iconbitmap(APP_ICON)
         except Exception:
             pass # Fails safely if the network drive drops or the icon is moved
-            
+
         # Default to smaller window, hiding the log on startup
-        self.root.geometry("680x530")
-        self.root.minsize(680, 530)
-        self.root.configure(bg=COLORS["bg_main"])
-        self.setup_styles()
+        self.root.geometry("760x690")
+        self.root.minsize(700, 620)
+        self.root.configure(fg_color=CONFIG["bg_main"])
+        ctk.set_appearance_mode("dark")
+        ctk.set_default_color_theme("dark-blue")
         self.build_ui()
         self.log("System Initialized. Awaiting user input.")
 
-    def setup_styles(self):
-        style = ttk.Style()
-        if 'clam' in style.theme_names(): style.theme_use('clam')
-        style.configure('TFrame', background=COLORS["bg_main"])
-        style.configure('TLabelframe', background=COLORS["bg_main"], foreground=COLORS["fg_main"])
-        style.configure('TLabelframe.Label', background=COLORS["bg_main"], foreground=COLORS["fg_main"], font=("Segoe UI", 10, "bold"))
-        style.configure('TLabel', background=COLORS["bg_main"], foreground=COLORS["fg_main"])
-
     def log(self, message):
-        self.log_text.insert(tk.END, f"{message}\n")
-        self.log_text.see(tk.END)
+        self.log_text.insert("end", f"{message}\n")
+        self.log_text.see("end")
         self.root.update()
 
     def build_ui(self):
-        main_container = ttk.Frame(self.root, padding=20)
-        main_container.pack(fill=tk.BOTH, expand=True)
+        main_container = ctk.CTkFrame(self.root, fg_color="transparent")
+        main_container.pack(fill="both", expand=True, padx=30, pady=26)
 
-        # Header
-        header_frame = ttk.Frame(main_container)
-        header_frame.pack(fill=tk.X, pady=(0, 15))
-        ttk.Label(header_frame, text="Daily Spreader (semi)Automation", font=("Segoe UI", 18, "bold")).pack(anchor=tk.W)
-        ttk.Label(header_frame, text="Extracts schedule data from WMT and builds the Excel template automatically.", foreground="#aaaaaa").pack(anchor=tk.W)
+        header = ctk.CTkFrame(main_container, fg_color="transparent")
+        header.pack(fill="x", pady=(0, 20))
+        ctk.CTkLabel(header, text="Daily Spreader", text_color=CONFIG["fg_main"],
+                     font=(CONFIG["font_family"], 28, "bold")).pack(anchor="w")
+        ctk.CTkLabel(header, text="Semi-automation for the TPA Watch Desk", text_color=CONFIG["accent"],
+                     font=(CONFIG["font_family"], 13, "bold")).pack(anchor="w", pady=(2, 0))
+        ctk.CTkLabel(header, text="Pull schedule data from WMT and build the Excel spreader in a few clicks.",
+                     text_color=CONFIG["fg_muted"], font=(CONFIG["font_family"], 12)).pack(anchor="w", pady=(7, 0))
 
-        # Step 1
-        step1 = ttk.LabelFrame(main_container, text=" Step 1: Get the Schedule Data ", padding=(15, 10))
-        step1.pack(fill=tk.X, pady=5)
-        ttk.Label(step1, text="1. Click here to open the Worksheet view in your browser.", font=("Segoe UI", 9)).grid(row=0, column=0, sticky=tk.W, pady=5)
-        RoundedButton(step1, "Launch WMT Scheduler", self.launch_wmt, radius=12, width=200, height=30, bg_color=COLORS["btn_help"], hover_color=COLORS["btn_help_hover"], font=("Segoe UI", 9, "bold")).grid(row=0, column=1, padx=15, pady=5)
-        ttk.Label(step1, text="2. Navigate to your date, press Ctrl+S, and save as HTML.", font=("Segoe UI", 9), foreground="#aaaaaa").grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
+        step1 = ctk.CTkFrame(main_container, fg_color=CONFIG["bg_surface"], corner_radius=CONFIG["radius_card"])
+        step1.pack(fill="x", pady=(0, 14))
+        ctk.CTkLabel(step1, text="01  GET THE SCHEDULE DATA", text_color=CONFIG["accent"],
+                     font=(CONFIG["font_family"], 12, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", padx=24, pady=(20, 4))
+        ctk.CTkLabel(step1, text="Open the WMT Worksheet View, then save the target date as HTML.",
+                     text_color=CONFIG["fg_muted"], font=(CONFIG["font_family"], 11)).grid(row=1, column=0, sticky="w", padx=24, pady=(0, 18))
+        ctk.CTkButton(step1, text="Launch WMT Scheduler", command=self.launch_wmt, width=210, height=42,
+                      corner_radius=CONFIG["radius_control"], fg_color=CONFIG["btn_secondary"],
+                      hover_color=CONFIG["btn_sec_hover"], font=(CONFIG["font_family"], 11, "bold")).grid(row=1, column=1, padx=(10, 24), pady=(0, 18))
 
-        # Step 2
-        step2 = ttk.LabelFrame(main_container, text=" Step 2: Build the Spreader ", padding=(15, 15))
-        step2.pack(fill=tk.X, pady=10)
-        
-        ttk.Label(step2, text="Target Date:", font=("Segoe UI", 9, "bold")).grid(row=0, column=0, sticky=tk.W, pady=8, padx=5)
-        self.date_entry = tk.Entry(step2, width=20, relief=tk.SOLID, borderwidth=1, font=("Segoe UI", 10), bg=COLORS["bg_input"], fg=COLORS["fg_main"], insertbackground=COLORS["fg_main"])
-        self.date_entry.grid(row=0, column=1, sticky=tk.W, pady=8, padx=5)
+        step2 = ctk.CTkFrame(main_container, fg_color=CONFIG["bg_surface"], corner_radius=CONFIG["radius_card"])
+        step2.pack(fill="x", pady=(0, 16))
+        ctk.CTkLabel(step2, text="02  BUILD THE SPREADER", text_color=CONFIG["accent"],
+                     font=(CONFIG["font_family"], 12, "bold")).grid(row=0, column=0, columnspan=3, sticky="w", padx=24, pady=(20, 15))
+
+        ctk.CTkLabel(step2, text="Target date", text_color=CONFIG["fg_main"], font=(CONFIG["font_family"], 11, "bold")).grid(row=1, column=0, sticky="w", padx=(24, 12), pady=8)
+        self.date_entry = ctk.CTkEntry(step2, height=40, corner_radius=CONFIG["radius_control"], fg_color=CONFIG["bg_input"],
+                                       border_color=CONFIG["border"], text_color=CONFIG["fg_main"], font=(CONFIG["font_family"], 11))
+        self.date_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=8)
         tmrw = datetime.now() + timedelta(days=1)
         self.date_entry.insert(0, f"{tmrw.month}-{tmrw.strftime('%d-%Y')}")
-        RoundedButton(step2, "Select Date", lambda: MiniCalendar(self.root, self.date_entry), radius=10, width=90, height=28, bg_color=COLORS["btn_secondary"], hover_color=COLORS["btn_sec_hover"], font=("Segoe UI", 9, "bold")).grid(row=0, column=2, padx=10)
+        ctk.CTkButton(step2, text="Select date", command=lambda: MiniCalendar(self.root, self.date_entry), width=105, height=40,
+                      corner_radius=CONFIG["radius_control"], fg_color=CONFIG["btn_secondary"], hover_color=CONFIG["btn_sec_hover"],
+                      font=(CONFIG["font_family"], 10, "bold")).grid(row=1, column=2, padx=(8, 24), pady=8)
 
-        ttk.Label(step2, text="Worksheet View HTML File:", font=("Segoe UI", 9, "bold")).grid(row=1, column=0, sticky=tk.W, pady=8, padx=5)
-        self.file_entry = tk.Entry(step2, width=42, relief=tk.SOLID, borderwidth=1, font=("Segoe UI", 10), bg=COLORS["bg_input"], fg=COLORS["fg_main"], insertbackground=COLORS["fg_main"])
-        self.file_entry.grid(row=1, column=1, sticky=tk.W, pady=8, padx=5)
-        RoundedButton(step2, "Browse...", self.browse_file, radius=15, width=90, height=28, bg_color=COLORS["btn_secondary"], hover_color=COLORS["btn_sec_hover"], font=("Segoe UI", 9, "bold")).grid(row=1, column=2, padx=10)
+        ctk.CTkLabel(step2, text="Worksheet HTML file", text_color=CONFIG["fg_main"], font=(CONFIG["font_family"], 11, "bold")).grid(row=2, column=0, sticky="w", padx=(24, 12), pady=(8, 20))
+        self.file_entry = ctk.CTkEntry(step2, height=40, corner_radius=CONFIG["radius_control"], fg_color=CONFIG["bg_input"],
+                                       border_color=CONFIG["border"], text_color=CONFIG["fg_main"], font=(CONFIG["font_family"], 10))
+        self.file_entry.grid(row=2, column=1, sticky="ew", padx=5, pady=(8, 20))
+        ctk.CTkButton(step2, text="Browse…", command=self.browse_file, width=105, height=40, corner_radius=CONFIG["radius_control"],
+                      fg_color=CONFIG["btn_secondary"], hover_color=CONFIG["btn_sec_hover"], font=(CONFIG["font_family"], 10, "bold")).grid(row=2, column=2, padx=(8, 24), pady=(8, 20))
+        step2.grid_columnconfigure(1, weight=1)
 
-        # Actions
-        actions = ttk.Frame(main_container)
-        actions.pack(fill=tk.X, pady=5)
-        RoundedButton(actions, "Generate Spreader", self.run_generation, radius=22, width=220, height=45, font=("Segoe UI", 11, "bold")).pack(pady=(10, 8))
-        
-        self.btn_help = RoundedButton(actions, "Help & Instructions", self.show_help, radius=12, width=160, height=28, bg_color=COLORS["bg_input"], hover_color=COLORS["btn_sec_hover"], font=("Segoe UI", 8, "bold"))
-        self.btn_help.pack(pady=5)
+        self.btn_generate = ctk.CTkButton(main_container, text="Generate Spreader", command=self.run_generation, height=54,
+                                          corner_radius=27, fg_color=CONFIG["accent"], hover_color=CONFIG["accent_hover"],
+                                          text_color=CONFIG["fg_main"], font=(CONFIG["font_family"], 14, "bold"))
+        self.btn_generate.pack(fill="x", pady=(3, 14))
 
-        self.btn_toggle = RoundedButton(actions, "Show Debug Logger ⬇", self.toggle_log, radius=12, width=160, height=28, bg_color=COLORS["bg_input"], hover_color=COLORS["btn_sec_hover"], font=("Segoe UI", 8, "bold"))
-        self.btn_toggle.pack(pady=(0, 5))
+        actions = ctk.CTkFrame(main_container, fg_color="transparent")
+        actions.pack(fill="x")
+        self.btn_help = ctk.CTkButton(actions, text="Help & Instructions", command=self.show_help, height=34, corner_radius=17,
+                                      fg_color=CONFIG["btn_secondary"], hover_color=CONFIG["btn_sec_hover"], font=(CONFIG["font_family"], 10, "bold"))
+        self.btn_help.pack(side="left", padx=(0, 8))
+        self.btn_toggle = ctk.CTkButton(actions, text="Show Debug Logger ↓", command=self.toggle_log, height=34, corner_radius=17,
+                                        fg_color=CONFIG["btn_secondary"], hover_color=CONFIG["btn_sec_hover"], font=(CONFIG["font_family"], 10, "bold"))
+        self.btn_toggle.pack(side="left")
 
-        # Log Frame (Created but not packed initially so it stays hidden)
-        self.log_frame = ttk.LabelFrame(main_container, text=" System Log ", padding=(10, 10))
-        scroll = ttk.Scrollbar(self.log_frame)
-        scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        self.log_text = tk.Text(self.log_frame, height=12, wrap=tk.WORD, font=("Consolas", 10), yscrollcommand=scroll.set, borderwidth=1, relief=tk.SOLID, bg=COLORS["bg_log"], fg=COLORS["fg_log"], insertbackground=COLORS["fg_main"])
-        self.log_text.pack(fill=tk.BOTH, expand=True)
-        scroll.config(command=self.log_text.yview)
+        self.log_frame = ctk.CTkFrame(main_container, fg_color=CONFIG["bg_surface"], corner_radius=CONFIG["radius_card"])
+        ctk.CTkLabel(self.log_frame, text="SYSTEM LOG", text_color=CONFIG["accent"], font=(CONFIG["font_family"], 11, "bold")).pack(anchor="w", padx=18, pady=(15, 8))
+        self.log_text = ctk.CTkTextbox(self.log_frame, height=220, corner_radius=16, fg_color=CONFIG["bg_log"],
+                                       text_color=CONFIG["fg_log"], font=("Consolas", 10), wrap="word")
+        self.log_text.pack(fill="both", expand=True, padx=14, pady=(0, 14))
 
     def toggle_log(self):
         if self.log_frame.winfo_ismapped():
             self.log_frame.pack_forget()
-            self.btn_toggle.config_text("Show Debug Logger ⬇")
-            self.root.geometry("680x530")
+            self.btn_toggle.configure(text="Show Debug Logger ↓")
+            self.root.geometry("760x690")
         else:
-            self.log_frame.pack(fill=tk.BOTH, expand=True, pady=10)
-            self.btn_toggle.config_text("Hide Debug Logger ⬆")
-            self.root.geometry("680x780")
+            self.log_frame.pack(fill="both", expand=True, pady=(14, 0))
+            self.btn_toggle.configure(text="Hide Debug Logger ↑")
+            self.root.geometry("760x930")
 
     def show_help(self):
-        help_win = tk.Toplevel(self.root)
+        help_win = ctk.CTkToplevel(self.root)
         help_win.title("Help & Instructions")
         help_win.geometry("550x650")
-        help_win.configure(bg=COLORS["bg_main"])
-        
+        help_win.configure(fg_color=CONFIG["bg_main"])
+
         try:
             help_win.iconbitmap(APP_ICON)
         except Exception:
             pass
 
-        title = tk.Label(help_win, text="Spreader Creator - User Guide", bg=COLORS["bg_main"], fg=COLORS["fg_main"], font=("Segoe UI", 14, "bold"))
+        title = ctk.CTkLabel(help_win, text="Spreader Creator - User Guide", text_color=CONFIG["fg_main"], font=(CONFIG["font_family"], 18, "bold"))
         title.pack(pady=(15, 10))
 
-        text_frame = tk.Frame(help_win, bg=COLORS["bg_main"])
+        text_frame = ctk.CTkFrame(help_win, fg_color="transparent")
         text_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 20))
-
-        scroll = tk.Scrollbar(text_frame)
-        scroll.pack(side=tk.RIGHT, fill=tk.Y)
-
-        help_text = tk.Text(text_frame, wrap=tk.WORD, yscrollcommand=scroll.set, bg=COLORS["bg_input"], fg=COLORS["fg_main"], font=("Segoe UI", 10), relief=tk.FLAT, padx=10, pady=10)
-        help_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scroll.config(command=help_text.yview)
+        help_text = ctk.CTkTextbox(text_frame, wrap="word", fg_color=CONFIG["bg_input"], text_color=CONFIG["fg_main"],
+                                   font=(CONFIG["font_family"], 11), corner_radius=16)
+        help_text.pack(fill="both", expand=True)
 
         instructions = (
             "1. DOWNLOADING WMT DATA\n"
@@ -491,13 +483,13 @@ class SpreaderApp:
             "• Press Ctrl+S to save the page.\n"
             "• CRITICAL: Change 'Save as type' to 'Webpage, HTML Only'.\n"
             "• Save it to the network Downloads folder.\n\n"
-            
+
             "2. GENERATING THE SPREADER\n"
             "----------------------------------------\n"
             "• Select the Target Date using the built-in calendar.\n"
             "• Click 'Browse' and select the HTML file you just saved.\n"
             "• Click 'Generate Spreader'.\n\n"
-            
+
             "3. HOW IT WORKS BEHIND THE SCENES\n"
             "----------------------------------------\n"
             "• DEV Shifts: Automatically marked with a 'T' code. Their End Time is placed in the REQ column, and OFF is left blank so they don't count towards staffing numbers.\n"
@@ -505,27 +497,28 @@ class SpreaderApp:
             "• FOS (Early Starts): Automatically adjusts the start time for the math, sets an 8-hour OFF time from that early start, and drops the final extended end time into the REQ column.\n"
             "• Leave Requests: Automatically flags unapproved leave (both full and partial shifts with times) to column AG. Ignores approved leave, shift changes, and shift swaps.\n"
             "• Shift Notes: Imports notes cleanly while filtering out automated WMT system notes (like '65 - OT OJT').\n\n"
-            
+
             "4. TROUBLESHOOTING\n"
             "----------------------------------------\n"
             "• Error: 'No valid shifts found' -> The WMT file was likely saved as 'Webpage, Complete' instead of 'HTML Only'. Delete it, re-save correctly, and try again.\n"
             "• File won't open automatically -> The spreader was created successfully, but Excel might be busy. Navigate to the Watch Desk Documents folder to open it manually."
         )
 
-        help_text.insert(tk.END, instructions)
-        help_text.config(state=tk.DISABLED)
+        help_text.insert("end", instructions)
+        help_text.configure(state="disabled")
+        help_win.transient(self.root)
 
     def launch_wmt(self):
         try:
             paths = [r"C:\Program Files\Google\Chrome\Application\chrome.exe", r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"]
             chrome_path = next((p for p in paths if os.path.exists(p)), None)
-            
+
             if chrome_path:
                 webbrowser.register('chrome_explicit', None, webbrowser.BackgroundBrowser(chrome_path))
                 webbrowser.get('chrome_explicit').open_new_tab(WMT_URL)
             else:
                 webbrowser.open_new_tab(WMT_URL)
-                
+
             messagebox.showinfo("Step 1", "WMT Scheduler should be opening in Chrome!\n\n1. Navigate to target date.\n2. Press 'Ctrl + S'.\n3. Change 'Save as type' to 'Webpage, HTML Only'.\n4. Save to network Downloads folder.")
         except Exception as e:
             messagebox.showerror("Error", f"Could not open browser:\n{str(e)}")
@@ -550,10 +543,10 @@ class SpreaderApp:
                 self.log("PROCESS HALTED: No valid shifts found.")
                 messagebox.showerror("No Data", "Could not find any shifts. Did you save the WMT page correctly?")
                 return
-                
+
             out_path = build_excel_file(shifts, leaves, notes, self.date_entry.get(), self.log)
             self.log("--- SUCCESS! SPREADER COMPLETE ---")
-            
+
             if messagebox.askyesno("Success", f"Spreader created successfully!\n\nSaved as: {self.date_entry.get()}.xlsm\n\nWould you like to open it now?"):
                 try: os.startfile(out_path)
                 except Exception as e:
@@ -567,6 +560,6 @@ class SpreaderApp:
 
 
 if __name__ == "__main__":
-    root = tk.Tk()
+    root = ctk.CTk()
     app = SpreaderApp(root)
     root.mainloop()
