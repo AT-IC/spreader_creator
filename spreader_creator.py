@@ -1,14 +1,63 @@
 import tkinter as tk
 from tkinter import messagebox, filedialog
-import customtkinter as ctk
 import re
 from datetime import datetime, timedelta
-import openpyxl
-from bs4 import BeautifulSoup
 import traceback
 import os
 import webbrowser
 import calendar
+import importlib.util
+from pathlib import Path
+import sys
+
+
+# ==========================================
+# 0. STARTUP DEPENDENCY CHECK
+# ==========================================
+REQUIRED_DEPENDENCIES = {
+    "customtkinter": "customtkinter",
+    "packaging": "packaging",
+    "openpyxl": "openpyxl",
+    "beautifulsoup4": "bs4",
+}
+
+
+def check_required_dependencies():
+    """Stop cleanly with installation instructions if a required package is missing."""
+    missing = [package for package, module in REQUIRED_DEPENDENCIES.items()
+               if importlib.util.find_spec(module) is None]
+    if not missing:
+        return
+
+    requirements_file = Path(__file__).with_name("requirements.txt")
+    if requirements_file.exists():
+        install_command = f'"{sys.executable}" -m pip install -r "{requirements_file}"'
+    else:
+        install_command = f'"{sys.executable}" -m pip install ' + " ".join(missing)
+
+    message = (
+        "Spreader Creator cannot start because required Python packages are missing:\n\n"
+        f"{', '.join(missing)}\n\n"
+        "Install them from Command Prompt with:\n\n"
+        f"{install_command}\n\n"
+        "Then launch Spreader Creator again."
+    )
+    try:
+        dialog_root = tk.Tk()
+        dialog_root.withdraw()
+        messagebox.showerror("Missing Dependencies", message)
+        dialog_root.destroy()
+    except tk.TclError:
+        # Keep a useful message if Tk itself cannot create a window.
+        print(message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+check_required_dependencies()
+
+import customtkinter as ctk
+import openpyxl
+from bs4 import BeautifulSoup
 
 # ==========================================
 # 1. CONFIGURATION & THEMES
@@ -21,22 +70,25 @@ APP_ICON = r"\\ITPAATPNFP001.ad.faa.gov\TPA-Data\Air Traffic\Watch Desk Document
 
 CONFIG = {
     # Fine-tune the complete visual theme here.
-    "bg_main": "#120B2E",
-    "bg_surface": "#21134D",
-    "bg_surface_alt": "#2B1A5E",
-    "bg_input": "#332166",
-    "bg_log": "#0C0820",
-    "fg_main": "#FFFFFF",
-    "fg_muted": "#C5BFE0",
-    "fg_log": "#A8F5D0",
-    "accent": "#F02BAE",
-    "accent_hover": "#FF4BC2",
-    "accent_pressed": "#C91B8E",
-    "btn_secondary": "#4B367C",
-    "btn_sec_hover": "#61499A",
-    "border": "#5B4395",
-    "success": "#49D7A7",
-    "danger": "#FF6B9D",
+    # Dark navy / blue / gold palette inspired by the latest reference.
+    "bg_main": "#101C2B",
+    "bg_surface": "#1A2F4C",
+    "bg_surface_alt": "#243B55",
+    "bg_input": "#14263B",
+    "bg_log": "#0B1522",
+    "fg_main": "#F0F4F8",
+    "fg_muted": "#B8C7D9",
+    "fg_log": "#D8E8F5",
+    "fg_on_accent": "#1A2F4C",
+    # Gold is intentionally reserved for primary actions and highlights.
+    "accent": "#D99B26",
+    "accent_hover": "#E5AF3C",
+    "accent_pressed": "#B98017",
+    "btn_secondary": "#3C619D",
+    "btn_sec_hover": "#5278B5",
+    "border": "#35516F",
+    "success": "#63C7AA",
+    "danger": "#FF8FA8",
     "radius_card": 24,
     "radius_control": 14,
     "font_family": "Segoe UI"
@@ -308,7 +360,7 @@ class MiniCalendar(ctk.CTkToplevel):
                       fg_color=CONFIG["btn_secondary"], hover_color=CONFIG["btn_sec_hover"],
                       command=self.prev_month).pack(side="left")
         self.month_lbl = ctk.CTkLabel(self.header_frame, text="", text_color=CONFIG["fg_main"],
-                                      font=(CONFIG["font_family"], 14, "bold"))
+                                      font=(CONFIG["font_family"], 16, "bold"))
         self.month_lbl.pack(side="left", expand=True)
         ctk.CTkButton(self.header_frame, text="›", width=36, height=32, corner_radius=12,
                       fg_color=CONFIG["btn_secondary"], hover_color=CONFIG["btn_sec_hover"],
@@ -341,7 +393,7 @@ class MiniCalendar(ctk.CTkToplevel):
         self.month_lbl.configure(text=f"{calendar.month_name[self.curr_month]} {self.curr_year}")
         for i, day_name in enumerate(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]):
             ctk.CTkLabel(self.cal_frame, text=day_name, text_color=CONFIG["fg_muted"],
-                         font=(CONFIG["font_family"], 10, "bold")).grid(row=0, column=i, padx=3, pady=(12, 5))
+                         font=(CONFIG["font_family"], 12, "bold")).grid(row=0, column=i, padx=3, pady=(12, 5))
         for row_idx, week in enumerate(calendar.Calendar(firstweekday=calendar.SUNDAY).monthdayscalendar(self.curr_year, self.curr_month)):
             for col_idx, day in enumerate(week):
                 if day:
@@ -386,63 +438,63 @@ class SpreaderApp:
         header = ctk.CTkFrame(main_container, fg_color="transparent")
         header.pack(fill="x", pady=(0, 20))
         ctk.CTkLabel(header, text="Daily Spreader", text_color=CONFIG["fg_main"],
-                     font=(CONFIG["font_family"], 28, "bold")).pack(anchor="w")
+                     font=(CONFIG["font_family"], 30, "bold")).pack(anchor="w")
         ctk.CTkLabel(header, text="Semi-automation for the TPA Watch Desk", text_color=CONFIG["accent"],
-                     font=(CONFIG["font_family"], 13, "bold")).pack(anchor="w", pady=(2, 0))
+                     font=(CONFIG["font_family"], 15, "bold")).pack(anchor="w", pady=(2, 0))
         ctk.CTkLabel(header, text="Pull schedule data from WMT and build the Excel spreader in a few clicks.",
-                     text_color=CONFIG["fg_muted"], font=(CONFIG["font_family"], 12)).pack(anchor="w", pady=(7, 0))
+                     text_color=CONFIG["fg_muted"], font=(CONFIG["font_family"], 14)).pack(anchor="w", pady=(7, 0))
 
         step1 = ctk.CTkFrame(main_container, fg_color=CONFIG["bg_surface"], corner_radius=CONFIG["radius_card"])
         step1.pack(fill="x", pady=(0, 14))
         ctk.CTkLabel(step1, text="01  GET THE SCHEDULE DATA", text_color=CONFIG["accent"],
-                     font=(CONFIG["font_family"], 12, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", padx=24, pady=(20, 4))
+                     font=(CONFIG["font_family"], 14, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", padx=24, pady=(20, 4))
         ctk.CTkLabel(step1, text="Open the WMT Worksheet View, then save the target date as HTML.",
-                     text_color=CONFIG["fg_muted"], font=(CONFIG["font_family"], 11)).grid(row=1, column=0, sticky="w", padx=24, pady=(0, 18))
+                     text_color=CONFIG["fg_muted"], font=(CONFIG["font_family"], 13)).grid(row=1, column=0, sticky="w", padx=24, pady=(0, 18))
         ctk.CTkButton(step1, text="Launch WMT Scheduler", command=self.launch_wmt, width=210, height=42,
                       corner_radius=CONFIG["radius_control"], fg_color=CONFIG["btn_secondary"],
-                      hover_color=CONFIG["btn_sec_hover"], font=(CONFIG["font_family"], 11, "bold")).grid(row=1, column=1, padx=(10, 24), pady=(0, 18))
+                      hover_color=CONFIG["btn_sec_hover"], font=(CONFIG["font_family"], 13, "bold")).grid(row=1, column=1, padx=(10, 24), pady=(0, 18))
 
         step2 = ctk.CTkFrame(main_container, fg_color=CONFIG["bg_surface"], corner_radius=CONFIG["radius_card"])
         step2.pack(fill="x", pady=(0, 16))
         ctk.CTkLabel(step2, text="02  BUILD THE SPREADER", text_color=CONFIG["accent"],
-                     font=(CONFIG["font_family"], 12, "bold")).grid(row=0, column=0, columnspan=3, sticky="w", padx=24, pady=(20, 15))
+                     font=(CONFIG["font_family"], 14, "bold")).grid(row=0, column=0, columnspan=3, sticky="w", padx=24, pady=(20, 15))
 
-        ctk.CTkLabel(step2, text="Target date", text_color=CONFIG["fg_main"], font=(CONFIG["font_family"], 11, "bold")).grid(row=1, column=0, sticky="w", padx=(24, 12), pady=8)
+        ctk.CTkLabel(step2, text="Target date", text_color=CONFIG["fg_main"], font=(CONFIG["font_family"], 13, "bold")).grid(row=1, column=0, sticky="w", padx=(24, 12), pady=8)
         self.date_entry = ctk.CTkEntry(step2, height=40, corner_radius=CONFIG["radius_control"], fg_color=CONFIG["bg_input"],
-                                       border_color=CONFIG["border"], text_color=CONFIG["fg_main"], font=(CONFIG["font_family"], 11))
+                                       border_color=CONFIG["border"], text_color=CONFIG["fg_main"], font=(CONFIG["font_family"], 13))
         self.date_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=8)
         tmrw = datetime.now() + timedelta(days=1)
         self.date_entry.insert(0, f"{tmrw.month}-{tmrw.strftime('%d-%Y')}")
         ctk.CTkButton(step2, text="Select date", command=lambda: MiniCalendar(self.root, self.date_entry), width=105, height=40,
                       corner_radius=CONFIG["radius_control"], fg_color=CONFIG["btn_secondary"], hover_color=CONFIG["btn_sec_hover"],
-                      font=(CONFIG["font_family"], 10, "bold")).grid(row=1, column=2, padx=(8, 24), pady=8)
+                      font=(CONFIG["font_family"], 12, "bold")).grid(row=1, column=2, padx=(8, 24), pady=8)
 
-        ctk.CTkLabel(step2, text="Worksheet HTML file", text_color=CONFIG["fg_main"], font=(CONFIG["font_family"], 11, "bold")).grid(row=2, column=0, sticky="w", padx=(24, 12), pady=(8, 20))
+        ctk.CTkLabel(step2, text="Worksheet HTML file", text_color=CONFIG["fg_main"], font=(CONFIG["font_family"], 13, "bold")).grid(row=2, column=0, sticky="w", padx=(24, 12), pady=(8, 20))
         self.file_entry = ctk.CTkEntry(step2, height=40, corner_radius=CONFIG["radius_control"], fg_color=CONFIG["bg_input"],
-                                       border_color=CONFIG["border"], text_color=CONFIG["fg_main"], font=(CONFIG["font_family"], 10))
+                                       border_color=CONFIG["border"], text_color=CONFIG["fg_main"], font=(CONFIG["font_family"], 12))
         self.file_entry.grid(row=2, column=1, sticky="ew", padx=5, pady=(8, 20))
         ctk.CTkButton(step2, text="Browse…", command=self.browse_file, width=105, height=40, corner_radius=CONFIG["radius_control"],
-                      fg_color=CONFIG["btn_secondary"], hover_color=CONFIG["btn_sec_hover"], font=(CONFIG["font_family"], 10, "bold")).grid(row=2, column=2, padx=(8, 24), pady=(8, 20))
+                      fg_color=CONFIG["btn_secondary"], hover_color=CONFIG["btn_sec_hover"], font=(CONFIG["font_family"], 12, "bold")).grid(row=2, column=2, padx=(8, 24), pady=(8, 20))
         step2.grid_columnconfigure(1, weight=1)
 
         self.btn_generate = ctk.CTkButton(main_container, text="Generate Spreader", command=self.run_generation, height=54,
                                           corner_radius=27, fg_color=CONFIG["accent"], hover_color=CONFIG["accent_hover"],
-                                          text_color=CONFIG["fg_main"], font=(CONFIG["font_family"], 14, "bold"))
+                                          text_color=CONFIG["fg_on_accent"], font=(CONFIG["font_family"], 16, "bold"))
         self.btn_generate.pack(fill="x", pady=(3, 14))
 
         actions = ctk.CTkFrame(main_container, fg_color="transparent")
         actions.pack(fill="x")
         self.btn_help = ctk.CTkButton(actions, text="Help & Instructions", command=self.show_help, height=34, corner_radius=17,
-                                      fg_color=CONFIG["btn_secondary"], hover_color=CONFIG["btn_sec_hover"], font=(CONFIG["font_family"], 10, "bold"))
+                                      fg_color=CONFIG["btn_secondary"], hover_color=CONFIG["btn_sec_hover"], font=(CONFIG["font_family"], 12, "bold"))
         self.btn_help.pack(side="left", padx=(0, 8))
         self.btn_toggle = ctk.CTkButton(actions, text="Show Debug Logger ↓", command=self.toggle_log, height=34, corner_radius=17,
-                                        fg_color=CONFIG["btn_secondary"], hover_color=CONFIG["btn_sec_hover"], font=(CONFIG["font_family"], 10, "bold"))
+                                        fg_color=CONFIG["btn_secondary"], hover_color=CONFIG["btn_sec_hover"], font=(CONFIG["font_family"], 12, "bold"))
         self.btn_toggle.pack(side="left")
 
         self.log_frame = ctk.CTkFrame(main_container, fg_color=CONFIG["bg_surface"], corner_radius=CONFIG["radius_card"])
-        ctk.CTkLabel(self.log_frame, text="SYSTEM LOG", text_color=CONFIG["accent"], font=(CONFIG["font_family"], 11, "bold")).pack(anchor="w", padx=18, pady=(15, 8))
+        ctk.CTkLabel(self.log_frame, text="SYSTEM LOG", text_color=CONFIG["accent"], font=(CONFIG["font_family"], 13, "bold")).pack(anchor="w", padx=18, pady=(15, 8))
         self.log_text = ctk.CTkTextbox(self.log_frame, height=220, corner_radius=16, fg_color=CONFIG["bg_log"],
-                                       text_color=CONFIG["fg_log"], font=("Consolas", 10), wrap="word")
+                                       text_color=CONFIG["fg_log"], font=("Consolas", 12), wrap="word")
         self.log_text.pack(fill="both", expand=True, padx=14, pady=(0, 14))
 
     def toggle_log(self):
@@ -466,13 +518,13 @@ class SpreaderApp:
         except Exception:
             pass
 
-        title = ctk.CTkLabel(help_win, text="Spreader Creator - User Guide", text_color=CONFIG["fg_main"], font=(CONFIG["font_family"], 18, "bold"))
+        title = ctk.CTkLabel(help_win, text="Spreader Creator - User Guide", text_color=CONFIG["fg_main"], font=(CONFIG["font_family"], 20, "bold"))
         title.pack(pady=(15, 10))
 
         text_frame = ctk.CTkFrame(help_win, fg_color="transparent")
         text_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 20))
         help_text = ctk.CTkTextbox(text_frame, wrap="word", fg_color=CONFIG["bg_input"], text_color=CONFIG["fg_main"],
-                                   font=(CONFIG["font_family"], 11), corner_radius=16)
+                                   font=(CONFIG["font_family"], 13), corner_radius=16)
         help_text.pack(fill="both", expand=True)
 
         instructions = (
