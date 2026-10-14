@@ -9,6 +9,8 @@ import calendar
 import importlib.util
 from pathlib import Path
 import sys
+from dataclasses import dataclass
+from typing import Callable, List, Optional, Tuple
 
 
 # ==========================================
@@ -97,33 +99,46 @@ CONFIG = {
 # Backwards-compatible alias for the non-UI code and any local customizations.
 COLORS = CONFIG
 
+
+@dataclass
+class ParsedData:
+    """Records extracted from one WMT worksheet export."""
+    shifts: List[dict]
+    leave_list: List[str]
+    notes_list: List[str]
+
+
+def validate_date(date_str: str) -> str:
+    """Validate and normalize the date used in the workbook filename."""
+    parsed = datetime.strptime(date_str.strip(), "%m-%d-%Y")
+    return f"{parsed.month}-{parsed.day:02d}-{parsed.year}"
+
 # ==========================================
 # 2. CORE BUSINESS LOGIC & TIME MATH
 # ==========================================
-def to_num(val):
-    if not val: return ""
-    if val.isdigit(): return int(val)
-    return val
+def to_num(val: str):
+    if not val:
+        return ""
+    return int(val) if val.isdigit() else val
 
-def subtract_hours(time_str, hours_to_sub):
-    if time_str in ["MID", "2400"]: time_str = "0000"
+def subtract_hours(time_str: str, hours_to_sub: int) -> str:
+    if time_str in ["MID", "2400"]:
+        time_str = "0000"
     try:
-        h = int(time_str[:2])
-        m = int(time_str[2:4])
-        new_h = h - hours_to_sub
-        if new_h < 0: new_h += 24
-        return f"{new_h:02d}{m:02d}"
-    except ValueError:
+        total_minutes = int(time_str[:2]) * 60 + int(time_str[2:4])
+        total_minutes = (total_minutes - hours_to_sub * 60) % (24 * 60)
+        return f"{total_minutes // 60:02d}{total_minutes % 60:02d}"
+    except (TypeError, ValueError):
         return time_str
 
-def add_hours(h, m, hours_to_add):
-    new_h = h + hours_to_add
-    while new_h >= 24:
-        if new_h == 24 and m == 0: return "2400"
-        new_h -= 24
-    return f"{new_h:02d}{m:02d}"
+def add_hours(h: int, m: int, hours_to_add: int) -> str:
+    total_minutes = (h * 60 + m + hours_to_add * 60) % (24 * 60)
+    if total_minutes == 0 and hours_to_add > 0:
+        return "2400"
+    return f"{total_minutes // 60:02d}{total_minutes % 60:02d}"
 
-def calculate_times(start_time, final_code, orig_code, ot_hours=0, fos_hours=0):
+def calculate_times(start_time: str, final_code: str, orig_code: str,
+                    ot_hours: int = 0, fos_hours: int = 0) -> Tuple[str, str]:
     if start_time in ["2230", "2300", "2330", "2400"]:
         return ("", "MID") if final_code == "T" else ("MID", "")
 
@@ -132,7 +147,7 @@ def calculate_times(start_time, final_code, orig_code, ot_hours=0, fos_hours=0):
 
     try:
         start_h, start_m = int(adjusted_start[:2]), int(adjusted_start[2:4])
-    except ValueError:
+    except (TypeError, ValueError):
         return "", ""
 
     if final_code == "T":       # Dev shift
@@ -156,7 +171,7 @@ def calculate_times(start_time, final_code, orig_code, ot_hours=0, fos_hours=0):
     else:
         return add_hours(start_h, start_m, 8), ""
 
-def sort_chronological(shift):
+def sort_chronological(shift: dict) -> int:
     t = int(shift['start'])
     return t - 2400 if t >= 2200 else t
 
@@ -164,7 +179,7 @@ def sort_chronological(shift):
 # ==========================================
 # 3. DATA EXTRACTION (HTML PARSING)
 # ==========================================
-def parse_html_data(filepath, log_cb):
+def parse_html_data(filepath: str, log_cb: Callable[[str], None]) -> ParsedData:
     filepath = filepath.strip('"').strip("'")
     log_cb(f"Opening file: {filepath}")
 
@@ -176,8 +191,8 @@ def parse_html_data(filepath, log_cb):
     log_cb("--- SCANNING OVERTIME TABLE ---")
     for row in soup.find_all('tr'):
         cols = row.find_all('td')
-        if len(cols) == 5 and cols[1].get_text(strip=True) in ["Scheduled", "Call In", "Holdover"]:
-            init = cols[0].get_text(strip=True)
+        if len(cols) == 5 and cols[1].get_text(strip=True).casefold() in {"scheduled", "call in", "holdover"}:
+            init = cols[0].get_text(strip=True).upper()
             hrs_text = cols[2].get_text(strip=True)
             reason_text = cols[3].get_text(strip=True).upper()
 
@@ -204,7 +219,9 @@ def parse_html_data(filepath, log_cb):
                 init, lv_type, lv_from, lv_to = [cols[i].get_text(strip=True) for i in range(4)]
                 status = cols[5].get_text(strip=True)
 
-                if "Approved" not in status and "Shift Chg" not in lv_type and "Shift Swap" not in lv_type:
+                if ("approved" not in status.casefold()
+                        and "shift chg" not in lv_type.casefold()
+                        and "shift swap" not in lv_type.casefold()):
                     time_addon = ""
                     if lv_from and lv_from.lower() != "shift":
                         time_addon = f" ({lv_from} - {lv_to})" if lv_to else f" ({lv_from})"
@@ -287,13 +304,20 @@ def parse_html_data(filepath, log_cb):
 
                         log_cb(f"Parsed -> {init} | Start: {t_str} | Code: {final_code or 'Standard (8-hr)'}{' (DEV)' if is_dev else ''}")
 
-    return shifts, leave_list, notes_list
+    return ParsedData(shifts, leave_list, notes_list)
 
 
 # ==========================================
 # 4. EXCEL GENERATION
 # ==========================================
-def build_excel_file(all_shifts, leave_list, notes_list, date_str, log_cb):
+def build_excel_file(all_shifts: List[dict], leave_list: List[str], notes_list: List[str],
+                     date_str: str, log_cb: Callable[[str], None],
+                     dry_run: bool = False) -> Optional[str]:
+    safe_date = validate_date(date_str)
+    if dry_run:
+        log_cb("DRY RUN: input validated; no workbook was opened or saved.")
+        return None
+
     morning_shifts = [s for s in all_shifts if s['start'] in ["2230", "2300", "2330", "2400"] or int(s['start']) < 1130]
     afternoon_shifts = [s for s in all_shifts if s not in morning_shifts]
 
@@ -301,8 +325,22 @@ def build_excel_file(all_shifts, leave_list, notes_list, date_str, log_cb):
     afternoon_shifts.sort(key=sort_chronological)
 
     log_cb("Loading Excel template (This may take a moment)...")
-    wb = openpyxl.load_workbook(TEMPLATE_PATH, keep_vba=True)
+    template_path = Path(TEMPLATE_PATH)
+    output_dir = Path(OUTPUT_DIR)
+    if not template_path.is_file():
+        raise FileNotFoundError(f"Excel template not found: {template_path}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    wb = openpyxl.load_workbook(template_path, keep_vba=True)
+    if "Projected Coverage" not in wb.sheetnames:
+        raise KeyError("Template is missing the 'Projected Coverage' worksheet")
     ws = wb["Projected Coverage"]
+
+    # Clear writable areas so records from a previous, larger run cannot remain.
+    for row in range(7, 109):
+        for col in ("E", "F", "G", "H", "J", "K", "L", "M"):
+            ws[f"{col}{row}"] = None
+    for row in list(range(9, 19)) + list(range(19, 29)):
+        ws[f"AG{row}"] = None
 
     def write_block(shifts_to_write, cols, label, start_row):
         row = start_row
@@ -312,6 +350,9 @@ def build_excel_file(all_shifts, leave_list, notes_list, date_str, log_cb):
         for shift in shifts_to_write:
             if last_start and shift['start'] != last_start:
                 row += 1
+
+            if row >= start_row + 100:
+                raise ValueError("Too many shifts for the available template rows")
 
             off, req = calculate_times(shift['start'], shift['code'], shift['orig_code'], shift['ot'], shift['fos'])
             ws[f'{c_init}{row}'] = shift['initials']
@@ -334,10 +375,13 @@ def build_excel_file(all_shifts, leave_list, notes_list, date_str, log_cb):
     for i, note in enumerate(notes_list[:10]): # Max 10 rows
         ws[f'AG{19+i}'] = note
 
-    output_path = f"{OUTPUT_DIR}{date_str}.xlsm"
+    if len(leave_list) > 10 or len(notes_list) > 10:
+        log_cb("WARNING: only the first 10 requests and 10 notes fit in the template.")
+
+    output_path = output_dir / f"{safe_date}.xlsm"
     log_cb(f"Saving workbook to: {output_path}")
     wb.save(output_path)
-    return output_path
+    return str(output_path)
 
 
 # ==========================================
@@ -477,6 +521,10 @@ class SpreaderApp:
                       fg_color=CONFIG["btn_secondary"], hover_color=CONFIG["btn_sec_hover"], font=(CONFIG["font_family"], 12, "bold")).grid(row=2, column=2, padx=(8, 24), pady=(8, 20))
         step2.grid_columnconfigure(1, weight=1)
 
+        self.dry_run_var = tk.BooleanVar(value=False)
+        ctk.CTkCheckBox(main_container, text="Preview / validate only (do not save Excel)",
+                        variable=self.dry_run_var, font=(CONFIG["font_family"], 12)).pack(anchor="w", pady=(0, 8))
+
         self.btn_generate = ctk.CTkButton(main_container, text="Generate Spreader", command=self.run_generation, height=54,
                                           corner_radius=27, fg_color=CONFIG["accent"], hover_color=CONFIG["accent_hover"],
                                           text_color=CONFIG["fg_on_accent"], font=(CONFIG["font_family"], 16, "bold"))
@@ -590,16 +638,33 @@ class SpreaderApp:
             return
 
         try:
-            shifts, leaves, notes = parse_html_data(filepath, self.log)
-            if not shifts:
+            parsed = parse_html_data(filepath, self.log)
+            if not parsed.shifts:
                 self.log("PROCESS HALTED: No valid shifts found.")
                 messagebox.showerror("No Data", "Could not find any shifts. Did you save the WMT page correctly?")
                 return
 
-            out_path = build_excel_file(shifts, leaves, notes, self.date_entry.get(), self.log)
+            if self.dry_run_var.get():
+                preview = (
+                    f"Shifts: {len(parsed.shifts)}\n"
+                    f"Flagged requests: {len(parsed.leave_list)}\n"
+                    f"Shift notes: {len(parsed.notes_list)}\n\n"
+                    "First shifts:\n"
+                    + "\n".join(
+                        f"  {shift['initials']} | {shift['start']} | {shift['code'] or 'Standard'}"
+                        for shift in parsed.shifts[:20]
+                    )
+                )
+                build_excel_file(parsed.shifts, parsed.leave_list, parsed.notes_list,
+                                 self.date_entry.get(), self.log, dry_run=True)
+                messagebox.showinfo("Preview", preview)
+                return
+
+            out_path = build_excel_file(parsed.shifts, parsed.leave_list, parsed.notes_list,
+                                        self.date_entry.get(), self.log)
             self.log("--- SUCCESS! SPREADER COMPLETE ---")
 
-            if messagebox.askyesno("Success", f"Spreader created successfully!\n\nSaved as: {self.date_entry.get()}.xlsm\n\nWould you like to open it now?"):
+            if messagebox.askyesno("Success", f"Spreader created successfully!\n\nSaved as: {out_path}\n\nWould you like to open it now?"):
                 try: os.startfile(out_path)
                 except Exception as e:
                     self.log(f"Native open failed: {e}")
